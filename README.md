@@ -1,3 +1,5 @@
+tried to fix some very bad bugs that made it impossible to use this !!!!!!!
+
 # ftpd
 
 FTP Server for 3DS/Switch/Linux.

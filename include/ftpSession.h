@@ -263,8 +263,17 @@ private:
 	/// \brief Data socket
 	SharedSocket m_dataSocket;
 
+	/// \brief Socket pending close
+	struct PendingClose
+	{
+		/// \brief Socket waiting for the peer to close its end
+		SharedSocket socket;
+		/// \brief When we started waiting
+		std::time_t since;
+	};
+
 	/// \brief Sockets pending close
-	std::vector<SharedSocket> m_pendingCloseSocket;
+	std::vector<PendingClose> m_pendingCloseSocket;
 
 	/// \brief Command buffer
 	IOBuffer m_commandBuffer;

@@ -71,6 +71,8 @@ namespace
 {
 /// \brief Idle timeout
 constexpr auto IDLE_TIMEOUT = 60;
+/// \brief How long to wait (seconds) for a peer to close its end before force-closing
+constexpr auto PENDING_CLOSE_TIMEOUT = 5;
 
 /// \brief Check if string view is a C string
 /// \param str_ String to check
@@ -651,8 +653,9 @@ void FtpSession::drawConnections ()
 		ImGui::TextWrapped ("Data %s -> %s", peerName, sockName);
 	}
 
-	for (auto const &sock : m_pendingCloseSocket)
+	for (auto const &pending : m_pendingCloseSocket)
 	{
+		auto const &sock = pending.socket;
 		if (!sock)
 			continue;
 
@@ -676,8 +679,8 @@ bool FtpSession::poll (std::vector<UniqueFtpSession> const &sessions_)
 	{
 		for (auto &pending : session->m_pendingCloseSocket)
 		{
-			assert (pending.unique ());
-			pollInfo.emplace_back (*pending, POLLIN, 0);
+			assert (pending.socket.unique ());
+			pollInfo.emplace_back (*pending.socket, POLLIN, 0);
 		}
 	}
 
@@ -701,7 +704,7 @@ bool FtpSession::poll (std::vector<UniqueFtpSession> const &sessions_)
 					for (auto it = std::begin (session->m_pendingCloseSocket);
 					     it != std::end (session->m_pendingCloseSocket);)
 					{
-						auto &socket = *it;
+						auto &socket = it->socket;
 						if (&i.socket.get () != socket.get ())
 						{
 							++it;
@@ -712,6 +715,22 @@ bool FtpSession::poll (std::vector<UniqueFtpSession> const &sessions_)
 					}
 				}
 			}
+		}
+	}
+
+	// Don't wait forever for a peer that never closes its end (or has vanished). Each socket
+	// holds on to buffer space (on 3DS, from the small shared soc:u pool), so leaking them
+	// eventually starves all networking.
+	{
+		auto const now = std::time (nullptr);
+		for (auto &session : sessions_)
+		{
+#ifndef __NDS__
+			auto const lock = std::scoped_lock (session->m_lock);
+#endif
+			std::erase_if (session->m_pendingCloseSocket, [now] (PendingClose const &pending) {
+				return now - pending.since >= PENDING_CLOSE_TIMEOUT;
+			});
 		}
 	}
 
@@ -932,7 +951,7 @@ void FtpSession::closeSocket (SharedSocket &socket_)
 	{
 		socket_->shutdown (SHUT_WR);
 		socket_->setLinger (true, 0s);
-		LOCKED (m_pendingCloseSocket.emplace_back (std::move (socket_)));
+		LOCKED (m_pendingCloseSocket.push_back ({std::move (socket_), std::time (nullptr)}));
 	}
 	else
 		LOCKED (socket_.reset ());
